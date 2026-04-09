@@ -1,60 +1,91 @@
-import tkinter as tk
-from tkinter import filedialog
-from utils.text_predict import predict_text_emotion
-from utils.image_predict import predict_image_emotion
-from utils.fusion import fuse_emotions
-from utils.responses import get_response
-from utils.graph import show_graph
-from utils.voice_input import get_voice_input
+from flask import Flask, render_template, request
+import pickle
 import datetime
+import csv
+import os
 
+app = Flask(__name__)
 
-def run_app():
+# Load ML model (IMPORTANT PATH FIX)
+model = pickle.load(open("models/text_model.pkl", "rb"))
+vectorizer = pickle.load(open("models/vectorizer.pkl", "rb"))
 
-    def analyze():
-        text = entry.get()
-        img = file_path.get()
+# Chatbot replies
+def chatbot_reply(prediction):
+    if prediction.lower() == "happy":
+        return "That's great to hear! Keep smiling 😊"
+    elif prediction.lower() == "sad":
+        return "I'm here for you. Things will get better 💙"
+    elif prediction.lower() == "angry":
+        return "Take a deep breath. Try to relax 🧘"
+    else:
+        return "Stay positive and take care of yourself 🌟"
 
-        text_emotion = predict_text_emotion(text)
-        image_emotion = predict_image_emotion(img)
+# Save history to CSV
+def save_history(text, prediction, confidence):
+    file_exists = os.path.isfile("history.csv")
 
-        final = fuse_emotions(text_emotion, image_emotion)
-        response = get_response(final)
+    with open("history.csv", mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
 
-        with open("history.txt", "a") as f:
-            f.write(f"{datetime.datetime.now()} - {final}\n")
+        if not file_exists:
+            writer.writerow(["Time", "Text", "Prediction", "Confidence"])
 
-        result_label.config(text=f"Emotion: {final}\n{response}")
+        writer.writerow([
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            text,
+            prediction,
+            str(confidence) + "%"
+        ])
 
-    def upload():
-        path = filedialog.askopenfilename()
-        file_path.set(path)
+# Home route
+@app.route("/", methods=["GET", "POST"])
+def home():
+    prediction = ""
+    confidence = 0
+    reply = ""
+    color = "black"
 
-    def use_voice():
-        text = get_voice_input()
-        entry.delete(0, tk.END)
-        entry.insert(0, text)
+    if request.method == "POST":
+        text = request.form.get("text", "")
 
-    # GUI window
-    root = tk.Tk()
-    root.title("Mental Health AI")
-    root.geometry("400x400")
-    root.configure(bg="#1e1e2f")
+        if text.strip() == "":
+            return render_template("index.html", error="Please enter some text")
 
-    title = tk.Label(root, text="Mental Health AI", font=("Arial", 16, "bold"), bg="#1e1e2f", fg="white")
-    title.pack(pady=10)
+        # Transform text
+        vec = vectorizer.transform([text])
 
-    entry = tk.Entry(root, width=35, font=("Arial", 12))
-    entry.pack(pady=10)
+        # Prediction
+        pred = model.predict(vec)[0]
+        prob = model.predict_proba(vec).max()
 
-    file_path = tk.StringVar()
+        prediction = pred
+        confidence = round(prob * 100, 2)
 
-    tk.Button(root, text="Upload Image", bg="#4CAF50", fg="white", command=upload).pack(pady=5)
-    tk.Button(root, text="🎤 Speak", bg="#2196F3", fg="white", command=use_voice).pack(pady=5)
-    tk.Button(root, text="Analyze", bg="#FF9800", fg="white", command=analyze).pack(pady=5)
-    tk.Button(root, text="📊 Show Graph", bg="#9C27B0", fg="white", command=show_graph).pack(pady=5)
+        # Chatbot reply
+        reply = chatbot_reply(prediction)
 
-    result_label = tk.Label(root, text="", font=("Arial", 12), bg="#1e1e2f", fg="white")
-    result_label.pack(pady=20)
+        # Color logic
+        if prediction.lower() == "happy":
+            color = "green"
+        elif prediction.lower() == "sad":
+            color = "red"
+        elif prediction.lower() == "angry":
+            color = "orange"
+        else:
+            color = "blue"
 
-    root.mainloop()
+        # Save history
+        save_history(text, prediction, confidence)
+
+    return render_template(
+        "index.html",
+        prediction=prediction,
+        confidence=confidence,
+        reply=reply,
+        color=color
+    )
+
+# Run app (for local testing only)
+if __name__ == "__main__":
+    app.run(debug=True)
